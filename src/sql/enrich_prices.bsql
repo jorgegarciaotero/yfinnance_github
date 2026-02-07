@@ -1,0 +1,38 @@
+CREATE OR REPLACE TABLE `yfinance-gcp.yfinance_raw.enriched_prices_table` AS
+WITH base_stats AS (
+  SELECT 
+    date, symbol, close, high, low, volume,
+    AVG(close) OVER(PARTITION BY symbol ORDER BY date ASC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) as sma_3,
+    AVG(close) OVER(PARTITION BY symbol ORDER BY date ASC ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) as sma_20,
+    AVG(close) OVER(PARTITION BY symbol ORDER BY date ASC ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) as sma_50,
+    AVG(close) OVER(PARTITION BY symbol ORDER BY date ASC ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) as sma_200,
+    MAX(high) OVER(PARTITION BY symbol ORDER BY date ASC ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) as high_52w,
+    MIN(low) OVER(PARTITION BY symbol ORDER BY date ASC ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) as low_52w,
+    close - LAG(close) OVER(PARTITION BY symbol ORDER BY date) as change,
+    STDDEV(close) OVER(PARTITION BY symbol ORDER BY date ASC ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) as stddev_20
+  FROM `yfinance-gcp.yfinance_raw.daily_prices`
+),
+rsi_prep AS (
+  SELECT *,
+    CASE WHEN change > 0 THEN change ELSE 0 END as gain,
+    CASE WHEN change < 0 THEN ABS(change) ELSE 0 END as loss
+  FROM base_stats
+),
+rsi_final AS (
+  SELECT *,
+    AVG(gain) OVER(PARTITION BY symbol ORDER BY date ASC ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) as avg_gain,
+    AVG(loss) OVER(PARTITION BY symbol ORDER BY date ASC ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) as avg_loss
+  FROM rsi_prep
+)
+SELECT 
+  date, symbol, close, volume,
+  CASE WHEN avg_loss = 0 THEN 100 ELSE ROUND(100 - (100 / (1 + (avg_gain / avg_loss))), 2) END as rsi_14,
+  ROUND((close - high_52w) / NULLIF(high_52w, 0), 4) as pct_from_52w_high,
+  ROUND((close - low_52w) / NULLIF(low_52w, 0), 4) as pct_from_52w_low,
+  ROUND(sma_20 + (2 * stddev_20), 2) as bollinger_high,
+  ROUND(sma_20 - (2 * stddev_20), 2) as bollinger_low,
+  ROUND((close - (sma_20 - 2 * stddev_20)) / NULLIF(4 * stddev_20, 0), 2) as bollinger_pct,
+  CASE WHEN sma_50 > sma_200 THEN TRUE ELSE FALSE END as is_bullish_trend,
+  ROUND((close - sma_200) / NULLIF(sma_200, 0), 4) as dist_sma_200,
+  ROUND(volume / NULLIF(AVG(volume) OVER(PARTITION BY symbol ORDER BY date ASC ROWS BETWEEN 19 PRECEDING AND CURRENT ROW), 0), 2) as volume_spike_ratio
+FROM rsi_final;

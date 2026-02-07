@@ -6,10 +6,11 @@ Daily job:
 - If prices table is empty -> backfill N years
 - Else -> load a single requested date
 """
-
-from datetime import date, datetime, timedelta
 import sys
 import os
+sys.path.append(os.getcwd())
+
+from datetime import date, datetime, timedelta
 import logging
 import pandas as pd
 import yfinance as yf
@@ -24,7 +25,6 @@ from src.config.settings import (
 )
 
 from src.config import settings
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.join("src", "config", "service-account.json")
 
 
 
@@ -36,6 +36,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 logger = logging.getLogger("daily_prices")
+
 
 
 def ensure_table() -> None:
@@ -163,6 +164,13 @@ def main(
 ) -> None:
     logger.info("starting daily_prices job")
 
+    
+    if os.path.exists(json_path):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = json_path
+        logger.info("Cargando credenciales desde JSON (Modo Local)")
+    else:
+        logger.info("No se encontró JSON, usando Identidad de Google Cloud (Modo Cloud)")
+
     ensure_table()
 
     symbols = get_active_symbols(limit)
@@ -186,16 +194,12 @@ def main(
         ).date().isoformat()
         logger.info("daily mode | date = %s", run_date)
     else:
-        if run_date is None:
-            raise ValueError(
-                "run_date (YYYY-MM-DD) is required when daily_prices is not empty"
-            )
-
+        run_date = (date.today() - timedelta(days=1)).isoformat()
         start_date = run_date
         end_date = (
             datetime.fromisoformat(run_date) + timedelta(days=1)
         ).date().isoformat()
-        logger.info("daily mode | date = %s", run_date)
+        logger.info("cron mode (automatic) | date = %s", run_date)
 
     all_data: list[pd.DataFrame] = []
 
@@ -212,7 +216,6 @@ def main(
         logger.warning("no price data collected")
 
     logger.info("daily_prices job finished")
-
 
 
 
@@ -244,6 +247,7 @@ def test_bigquery_connection() -> None:
 
 
 if __name__ == "__main__":
+    json_path = os.path.join("src", "config", "service-account.json")
     # sys.argv[0] is the script name
     # sys.argv[1] is the first argument (start_date / run_date)
     # sys.argv[2] is the second argument (end_date_arg)
