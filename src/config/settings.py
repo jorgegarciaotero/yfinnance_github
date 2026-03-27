@@ -10,7 +10,7 @@ DATASET = "yfinance_raw"
 COMPANIES_TABLE = f"{PROJECT_ID}.{DATASET}.companies"
 DAILY_PRICES_TABLE = f"{PROJECT_ID}.{DATASET}.daily_prices"
 ENRICHED_PRICES_TABLE = f"{PROJECT_ID}.{DATASET}.enriched_prices_table"
-WAR_DIP_TABLE = f"{PROJECT_ID}.{DATASET}.war_dip_results"
+DAILY_PICKS_TABLE = f"{PROJECT_ID}.{DATASET}.daily_picks"
 
 # ─────────────────────────────────────────────
 # Yahoo Finance

@@ -30,9 +30,9 @@ jobs:
       - name: daily_enrich
         run: python -m src.jobs.daily_enrich
 
-      # ── 3. War dip scanner ──────────────────────────────────────────────
-      - name: daily_scanner
-        run: python -m src.jobs.daily_scanner
+      # ── 3. Daily picks (top 20 opportunities) ──────────────────────────
+      - name: daily_picks
+        run: python -m src.jobs.daily_picks
 
       - name: Cleanup credentials
         if: always()
