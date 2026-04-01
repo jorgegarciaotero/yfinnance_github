@@ -5,6 +5,7 @@
 # ─────────────────────────────────────────────
 PROJECT_ID = "yfinance-gcp"
 DATASET = "yfinance_raw"
+GCS_BUCKET = "yfinance-cache"
 
 # Tables (fully-qualified)
 COMPANIES_TABLE = f"{PROJECT_ID}.{DATASET}.companies"

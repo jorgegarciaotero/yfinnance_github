@@ -335,6 +335,8 @@ def merge_companies(df: pd.DataFrame) -> None:
     client.query(merge_sql).result()
 
 
+
+
 # ─────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────

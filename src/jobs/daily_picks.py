@@ -108,6 +108,7 @@ def merge_results(client: bigquery.Client, rows: list[dict]) -> None:
     logger.info("merge completed: %d rows upserted", len(rows))
 
 
+
 def main() -> None:
     logger.info("starting daily_picks")
 
@@ -126,6 +127,7 @@ def main() -> None:
     ensure_table(client)
     rows = run_picks(client)
     merge_results(client, rows)
+
     logger.info("daily_picks finished")
 
 
