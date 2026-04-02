@@ -1,5 +1,6 @@
 CREATE OR REPLACE TABLE `yfinance-gcp.yfinance_raw.enriched_prices_table`
 PARTITION BY date
+CLUSTER BY symbol
 AS
 WITH base_stats AS (
   SELECT 

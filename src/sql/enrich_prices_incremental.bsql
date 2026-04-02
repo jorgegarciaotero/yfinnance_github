@@ -73,6 +73,8 @@ USING (
 
   -- Solo los últimos 30 días: cubre fines de semana, festivos y runs fallidos
   WHERE t.date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  -- Deduplicar por si daily_prices tiene filas duplicadas para el mismo (date, symbol)
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY t.symbol, t.date ORDER BY t.date) = 1
 
 ) S
 ON T.date = S.date AND T.symbol = S.symbol

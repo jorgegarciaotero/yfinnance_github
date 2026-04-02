@@ -55,7 +55,10 @@ def ensure_table() -> None:
         client.get_table(DAILY_PRICES_TABLE)
         logger.info("daily_prices table exists")
     except Exception:
-        client.create_table(bigquery.Table(DAILY_PRICES_TABLE, schema=schema))
+        table = bigquery.Table(DAILY_PRICES_TABLE, schema=schema)
+        table.time_partitioning = bigquery.TimePartitioning(field="date")
+        table.clustering_fields = ["symbol"]
+        client.create_table(table)
         logger.info("daily_prices table created")
 
 

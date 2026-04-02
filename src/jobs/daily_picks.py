@@ -61,6 +61,8 @@ def ensure_table(client: bigquery.Client) -> None:
         logger.info("daily_picks table exists")
     except Exception:
         table = bigquery.Table(DAILY_PICKS_TABLE, schema=SCHEMA)
+        table.time_partitioning = bigquery.TimePartitioning(field="date")
+        table.clustering_fields = ["symbol"]
         client.create_table(table)
         logger.info("daily_picks table created")
 
