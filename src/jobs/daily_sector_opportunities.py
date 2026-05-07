@@ -3,13 +3,14 @@
 Daily job:
 - Runs sector_opportunities_incremental.bsql against enriched_prices_table
 - Produces up to 10 stock opportunities per sector × 3 setup types:
-    Dip (Tendencia Alcista) | Momentum (Líderes) | Value Reversal
+    Dip (Bullish Trend)  |  Momentum (Leaders)  |  Value Reversal
 - Each row includes a composite score (0-100) and a human-readable reason
 - DELETE + INSERT on max_date (idempotent)
 - Runs AFTER daily_enrich
 """
 
 import os
+import sys
 import logging
 from pathlib import Path
 from google.cloud import bigquery
@@ -46,13 +47,26 @@ SCHEMA = [
     bigquery.SchemaField("score",              "FLOAT64"),
     bigquery.SchemaField("rank_in_sector",     "INT64"),
     bigquery.SchemaField("reason",             "STRING"),
+    bigquery.SchemaField("company_name",       "STRING"),
+    bigquery.SchemaField("company_url",        "STRING"),
+    bigquery.SchemaField("company_summary",    "STRING"),
+    bigquery.SchemaField("top_news_title",     "STRING"),
+    bigquery.SchemaField("top_news_url",       "STRING"),
+    bigquery.SchemaField("narrative",          "STRING"),
 ]
 
 
 def ensure_table(client: bigquery.Client) -> None:
     try:
-        client.get_table(SECTOR_OPPORTUNITIES_TABLE)
-        logger.info("sector_daily_opportunities table exists")
+        table = client.get_table(SECTOR_OPPORTUNITIES_TABLE)
+        existing_fields = {f.name for f in table.schema}
+        new_fields = [f for f in SCHEMA if f.name not in existing_fields]
+        if new_fields:
+            table.schema = list(table.schema) + new_fields
+            client.update_table(table, ["schema"])
+            logger.info("sector_daily_opportunities table schema updated (+%d fields)", len(new_fields))
+        else:
+            logger.info("sector_daily_opportunities table exists")
     except Exception:
         table = bigquery.Table(SECTOR_OPPORTUNITIES_TABLE, schema=SCHEMA)
         table.time_partitioning = bigquery.TimePartitioning(field="date")
@@ -61,8 +75,14 @@ def ensure_table(client: bigquery.Client) -> None:
         logger.info("sector_daily_opportunities table created")
 
 
-def run_sql(client: bigquery.Client) -> None:
+def run_sql(client: bigquery.Client, target_date: str | None = None) -> None:
     sql = SECTOR_SQL.read_text(encoding="utf-8")
+    if target_date:
+        sql = sql.replace(
+            "SET max_date = (\n  SELECT MAX(date) FROM `yfinance-gcp.yfinance_raw.enriched_prices_table`\n);",
+            f"SET max_date = DATE '{target_date}';",
+        )
+        logger.info("backfill mode: target_date=%s", target_date)
     logger.info("running sector_opportunities query...")
     job = client.query(sql)
     job.result()
@@ -70,6 +90,10 @@ def run_sql(client: bigquery.Client) -> None:
 
 
 def main() -> None:
+    target_date = None
+    if "--date" in sys.argv:
+        target_date = sys.argv[sys.argv.index("--date") + 1]
+
     logger.info("starting daily_sector_opportunities")
 
     json_path = os.path.join("src", "config", "service-account.json")
@@ -85,7 +109,7 @@ def main() -> None:
 
     client = bigquery.Client(project=PROJECT_ID)
     ensure_table(client)
-    run_sql(client)
+    run_sql(client, target_date)
 
     logger.info("daily_sector_opportunities finished")
 

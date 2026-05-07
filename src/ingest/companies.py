@@ -52,6 +52,14 @@ def _get_stoxx_600() -> pd.Series:
     return df["RIC"]
 
 
+def _get_commodities_etfs() -> list:
+    return ["GLD", "SLV", "USO", "CPER", "PPLT", "URA"]
+
+
+def _get_bonds_etfs() -> list:
+    return ["TLT", "IEF"]
+
+
 def get_companies_universe() -> pd.DataFrame:
     """
     Return DataFrame with columns:
@@ -68,6 +76,12 @@ def get_companies_universe() -> pd.DataFrame:
 
     for symbol in _get_stoxx_600():
         data.append({"symbol": symbol, "source": "stoxx600"})
+
+    for symbol in _get_commodities_etfs():
+        data.append({"symbol": symbol, "source": "commodities"})
+
+    for symbol in _get_bonds_etfs():
+        data.append({"symbol": symbol, "source": "bonds"})
 
     df = pd.DataFrame(data)
 

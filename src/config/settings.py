@@ -12,6 +12,8 @@ COMPANIES_TABLE = f"{PROJECT_ID}.{DATASET}.companies"
 DAILY_PRICES_TABLE = f"{PROJECT_ID}.{DATASET}.daily_prices"
 ENRICHED_PRICES_TABLE = f"{PROJECT_ID}.{DATASET}.enriched_prices_table"
 SECTOR_OPPORTUNITIES_TABLE = f"{PROJECT_ID}.{DATASET}.sector_daily_opportunities"
+ANOMALY_RADAR_TABLE        = f"{PROJECT_ID}.{DATASET}.anomaly_radar"
+COMPANY_NEWS_TABLE         = f"{PROJECT_ID}.{DATASET}.company_news"
 
 # ─────────────────────────────────────────────
 # Yahoo Finance
@@ -22,5 +24,5 @@ YAHOO_DAILY_BACKFILL_YEARS = 5
 # ─────────────────────────────────────────────
 # Jobs
 # ─────────────────────────────────────────────
-DEFAULT_LIMIT = None   # para pruebas locales
-BATCH_SIZE = 100      # para descargas por lotes
+DEFAULT_LIMIT = None   # for local testing
+BATCH_SIZE = 100       # download batch size

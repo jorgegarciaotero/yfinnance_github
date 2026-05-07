@@ -1,0 +1,57 @@
+{
+  "sections": {
+    "daily_radar": {
+      "title": "Daily Radar",
+      "subtitle": "Unusual market behavior, detected daily",
+      "description": "The Daily Radar scans the entire market every night and surfaces stocks with statistically unusual behavior — big price moves backed by volume, extreme oversold conditions, or sustained multi-timeframe momentum. Each signal is scored 0–100 and comes with a one-line technical reason and an AI-generated narrative explaining the 'why' behind the move.",
+      "anomaly_types": {
+        "Volume/Price Spike": {
+          "label": "Volume / Price Spike",
+          "description": "A strong price impulse (≥3% in 1 day, ≥7% in 3 days, or ≥10% in 7 days) confirmed by above-average volume (≥1.5× the 20-day average). Something real is moving this stock."
+        },
+        "Critical Oversold": {
+          "label": "Critical Oversold",
+          "description": "A sharp drop (≥8% in 3 days or ≥12% in 7 days) with RSI below 30. Extreme selling pressure that may be exhausting itself — potential bounce candidates."
+        },
+        "Confirmed Momentum": {
+          "label": "Confirmed Momentum",
+          "description": "Sector leaders with sustained gains across 30d, 7d, and 3d — no sign of reversal. These stocks are not just moving; they have been moving consistently."
+        }
+      }
+    },
+    "sector_opportunities": {
+      "title": "Sector Opportunities",
+      "subtitle": "Recurring setups, organized by sector",
+      "description": "Instead of chasing hot stocks, Sector Opportunities teaches you to recognize three recurring market patterns within each sector. Every day the algorithm ranks the best candidates per sector and setup type — giving you a structured, repeatable way to approach the market.",
+      "setup_types": {
+        "Dip (Bullish Trend)": {
+          "label": "Dip — Bullish Trend",
+          "description": "A stock in a confirmed long-term uptrend (above SMA200) that has pulled back to an oversold RSI zone (30–45). Classic 'buy the dip' setup — the underlying trend is intact and the stock is on sale."
+        },
+        "Momentum (Leaders)": {
+          "label": "Momentum — Leaders",
+          "description": "The strongest stocks in their sector right now. High 10-day momentum, RSI in the momentum zone (55–75), and trading near 52-week highs. These are the names institutions are accumulating."
+        },
+        "Value Reversal": {
+          "label": "Value Reversal",
+          "description": "Stocks down 30%+ from their 52-week high, with a P/E below 20 and analyst buy consensus. Deep corrections in fundamentally healthy companies — higher risk, higher potential reward."
+        }
+      }
+    },
+    "macro": {
+      "title": "Macro & Commodities",
+      "subtitle": "The economic backdrop, at a glance",
+      "description": "Before picking individual stocks, understand the macro environment. This section tracks key commodity and bond ETFs as real-time economic indicators — gold and bonds reflect risk appetite and rate expectations; copper and oil signal industrial activity; uranium points to the energy transition. Use this as your daily macro pulse.",
+      "etfs": {
+        "GLD":  { "name": "Gold",          "signal": "Safe haven / inflation hedge" },
+        "SLV":  { "name": "Silver",        "signal": "Industrial demand / inflation" },
+        "USO":  { "name": "Oil",           "signal": "Energy / geopolitical risk" },
+        "CPER": { "name": "Copper",        "signal": "Industrial cycle / China growth" },
+        "PPLT": { "name": "Platinum",      "signal": "Automotive / green transition" },
+        "URA":  { "name": "Uranium",       "signal": "Nuclear / clean energy" },
+        "TLT":  { "name": "20Y Treasury",  "signal": "Long-term interest rates" },
+        "IEF":  { "name": "7-10Y Treasury","signal": "Medium-term interest rates" }
+      }
+    }
+  }
+}

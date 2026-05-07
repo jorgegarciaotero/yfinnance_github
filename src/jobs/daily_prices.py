@@ -77,6 +77,21 @@ def prices_table_is_empty() -> bool:
     return empty
 
 
+def get_symbols_without_history(all_symbols: list[str]) -> list[str]:
+    """Returns symbols that have no rows at all in daily_prices (need backfill)."""
+    client = bigquery.Client(project=PROJECT_ID)
+
+    query = f"""
+        SELECT DISTINCT symbol
+        FROM `{DAILY_PRICES_TABLE}`
+    """
+    existing = {r.symbol for r in client.query(query).result()}
+    new_symbols = [s for s in all_symbols if s not in existing]
+    if new_symbols:
+        logger.info("symbols with no history (will backfill): %s", new_symbols)
+    return new_symbols
+
+
 def get_active_symbols(limit: int | None) -> list[str]:
     client = bigquery.Client(project=PROJECT_ID)
 
@@ -191,37 +206,60 @@ def main(
 
     symbols = get_active_symbols(limit)
 
+    # ── Determine incremental date range ─────────────────────────────────────
     if prices_table_is_empty():
-        start_date = (
+        incr_start = (
             date.today() - timedelta(days=365 * YAHOO_DAILY_BACKFILL_YEARS)
         ).isoformat()
-        end_date = date.today().isoformat()
-        logger.info("backfill mode | %s -> %s", start_date, end_date)
+        incr_end = date.today().isoformat()
+        logger.info("backfill mode (table empty) | %s -> %s", incr_start, incr_end)
+        new_symbols = []   # all symbols covered by full backfill
     elif run_date and end_date_arg:
-        start_date = run_date
-        end_date = (
+        incr_start = run_date
+        incr_end = (
             datetime.fromisoformat(end_date_arg) + timedelta(days=1)
         ).date().isoformat()
-        logger.info("range mode | %s -> %s (adjusted for inclusion)", start_date, end_date_arg)
+        logger.info("range mode | %s -> %s", incr_start, end_date_arg)
+        new_symbols = get_symbols_without_history(symbols)
     elif run_date:
-        start_date = run_date
-        end_date = (
+        incr_start = run_date
+        incr_end = (
             datetime.fromisoformat(run_date) + timedelta(days=1)
         ).date().isoformat()
         logger.info("daily mode | date = %s", run_date)
+        new_symbols = get_symbols_without_history(symbols)
     else:
         run_date = (date.today() - timedelta(days=1)).isoformat()
-        start_date = run_date
-        end_date = (
+        incr_start = run_date
+        incr_end = (
             datetime.fromisoformat(run_date) + timedelta(days=1)
         ).date().isoformat()
-        logger.info("cron mode (automatic) | date = %s", run_date)
+        logger.info("cron mode | date = %s", run_date)
+        new_symbols = get_symbols_without_history(symbols)
 
     all_data: list[pd.DataFrame] = []
 
-    for symbol in symbols:
-        logger.info("processing %s", symbol)
-        df = fetch_daily_prices(symbol, start_date, end_date)
+    # ── 1. Backfill for brand-new symbols (no history at all) ─────────────────
+    if new_symbols:
+        backfill_start = (
+            date.today() - timedelta(days=365 * YAHOO_DAILY_BACKFILL_YEARS)
+        ).isoformat()
+        backfill_end = date.today().isoformat()
+        logger.info(
+            "backfilling %d new symbols from %s to %s",
+            len(new_symbols), backfill_start, backfill_end,
+        )
+        for symbol in new_symbols:
+            df = fetch_daily_prices(symbol, backfill_start, backfill_end)
+            if not df.empty:
+                all_data.append(df)
+
+    # ── 2. Incremental update for all symbols ─────────────────────────────────
+    incremental_symbols = symbols if not new_symbols else [
+        s for s in symbols if s not in new_symbols
+    ]
+    for symbol in incremental_symbols:
+        df = fetch_daily_prices(symbol, incr_start, incr_end)
         if not df.empty:
             all_data.append(df)
 

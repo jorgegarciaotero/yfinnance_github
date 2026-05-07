@@ -1,17 +1,17 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SECTOR DAILY OPPORTUNITIES — INCREMENTAL
 --
--- Para cada sector, extrae hasta 10 empresas en 3 categorías de setup:
---   1. Dip (Tendencia Alcista) — corrección dentro de uptrend confirmado
---   2. Momentum (Líderes)     — breakouts sectoriales con fuerza
---   3. Value Reversal         — caídas fuertes con fundamentales sanos
+-- For each sector, extracts up to 15 companies in 3 setup categories:
+--   1. Dip (Bullish Trend)  — correction within a confirmed uptrend
+--   2. Momentum (Leaders)   — sector breakouts with strong momentum
+--   3. Value Reversal       — deep corrections with healthy fundamentals
 --
--- SCORE (0-100, 4 componentes × 25pts, varía por categoría):
---   Dip:             A. RSI oversold  B. Salud SMA200  C. Analistas  D. Market cap
---   Momentum:        A. Momentum 10d  B. RSI zona 65   C. Near high  D. Analistas
---   Value Reversal:  A. PE quality    B. Upside depth  C. Analistas  D. Market cap
+-- SCORE (0-100, 4 components × 25pts, varies by category):
+--   Dip:            A. RSI oversold  B. SMA200 health  C. Analysts  D. Market cap
+--   Momentum:       A. Momentum 10d  B. RSI zone 65    C. Near high  D. Analysts
+--   Value Reversal: A. PE quality    B. Upside depth   C. Analysts   D. Market cap
 --
--- Idempotente: borra e inserta para max_date de enriched_prices_table.
+-- Idempotent: deletes and inserts for max_date of enriched_prices_table.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 DECLARE max_date DATE;
@@ -19,12 +19,23 @@ SET max_date = (
   SELECT MAX(date) FROM `yfinance-gcp.yfinance_raw.enriched_prices_table`
 );
 
--- Idempotencia: elimina datos previos para este día si el job se relanza
+-- Idempotency: delete previous data for this day if job is re-run
 DELETE FROM `yfinance-gcp.yfinance_raw.sector_daily_opportunities`
 WHERE date = max_date;
 
 INSERT INTO `yfinance-gcp.yfinance_raw.sector_daily_opportunities`
 WITH
+
+-- ── Latest company metadata (most recent weekly snapshot) ─────────────────────
+latest_companies AS (
+  SELECT symbol, short_name, business_summary
+  FROM (
+    SELECT symbol, short_name, business_summary,
+           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY updated_at DESC) AS rn
+    FROM `yfinance-gcp.yfinance_raw.companies`
+  )
+  WHERE rn = 1
+),
 
 -- ── Base universe ─────────────────────────────────────────────────────────────
 base AS (
@@ -40,7 +51,7 @@ base AS (
 dip AS (
   SELECT
     date, sector, industry, symbol,
-    'Dip (Tendencia Alcista)'           AS setup_type,
+    'Dip (Bullish Trend)'               AS setup_type,
     ROUND(close, 2)                     AS close,
     ROUND(market_cap / 1e9, 2)          AS market_cap_bn,
     rsi_14,
@@ -72,7 +83,7 @@ dip AS (
 momentum AS (
   SELECT
     date, sector, industry, symbol,
-    'Momentum (Líderes)'                AS setup_type,
+    'Momentum (Leaders)'                AS setup_type,
     ROUND(close, 2)                     AS close,
     ROUND(market_cap / 1e9, 2)          AS market_cap_bn,
     rsi_14,
@@ -84,7 +95,7 @@ momentum AS (
     recommendation_key,
     -- Score (0-100):
     --   A (25): Momentum strength    — +2%=0, +15%=25pts
-    --   B (25): RSI sweet spot       — bell curve centrada en 65 (zona momentum fuerte)
+    --   B (25): RSI sweet spot       — bell curve centered at 65 (strong momentum zone)
     --   C (25): Near 52w high        — -10%=0pts, -0%=25pts
     --   D (25): Analyst consensus
     ROUND(
@@ -115,7 +126,7 @@ value_rev AS (
     pe_ratio,
     recommendation_key,
     -- Score (0-100):
-    --   A (25): PE quality           — PE 20=0pts, PE 5=25pts (ya filtrado buy/strong_buy)
+    --   A (25): PE quality           — PE 20=0pts, PE 5=25pts (already filtered buy/strong_buy)
     --   B (25): Upside potential     — -30% from high=0, -70%+=25pts
     --   C (25): Analyst consensus
     --   D (25): Market cap quality   — $2B=0, $50B+=25pts
@@ -141,42 +152,49 @@ all_candidates AS (
 )
 
 SELECT
-  date,
-  sector,
-  industry,
-  symbol,
-  setup_type,
-  close,
-  market_cap_bn,
-  rsi_14,
-  momentum_10d_pct,
-  dist_sma200_pct,
-  pct_from_52w_high,
-  pct_from_52w_low,
-  pe_ratio,
-  recommendation_key,
-  score,
-  rank_in_sector,
-  CASE setup_type
-    WHEN 'Dip (Tendencia Alcista)' THEN CONCAT(
-      'Bullish trend with RSI ', FORMAT('%.0f', rsi_14), ' in oversold zone. ',
-      'Momentum ', FORMAT('%.1f', momentum_10d_pct), '% in 10d (dip). ',
-      FORMAT('%.1f', dist_sma200_pct), '% above SMA200. ',
-      'Analysts: ', recommendation_key, '.'
+  a.date,
+  a.sector,
+  a.industry,
+  a.symbol,
+  a.setup_type,
+  a.close,
+  a.market_cap_bn,
+  a.rsi_14,
+  a.momentum_10d_pct,
+  a.dist_sma200_pct,
+  a.pct_from_52w_high,
+  a.pct_from_52w_low,
+  a.pe_ratio,
+  a.recommendation_key,
+  a.score,
+  a.rank_in_sector,
+  CASE a.setup_type
+    WHEN 'Dip (Bullish Trend)' THEN CONCAT(
+      'Bullish trend with RSI ', FORMAT('%.0f', a.rsi_14), ' in oversold zone. ',
+      'Momentum ', FORMAT('%.1f', a.momentum_10d_pct), '% in 10d (dip). ',
+      FORMAT('%.1f', a.dist_sma200_pct), '% above SMA200. ',
+      'Analysts: ', a.recommendation_key, '.'
     )
-    WHEN 'Momentum (Líderes)' THEN CONCAT(
-      'Momentum +', FORMAT('%.1f', momentum_10d_pct), '% in 10d. ',
-      'RSI ', FORMAT('%.0f', rsi_14), ' (momentum zone). ',
-      FORMAT('%.1f', pct_from_52w_high), '% from 52w high. ',
-      'Analysts: ', recommendation_key, '.'
+    WHEN 'Momentum (Leaders)' THEN CONCAT(
+      'Momentum +', FORMAT('%.1f', a.momentum_10d_pct), '% in 10d. ',
+      'RSI ', FORMAT('%.0f', a.rsi_14), ' (momentum zone). ',
+      FORMAT('%.1f', a.pct_from_52w_high), '% from 52w high. ',
+      'Analysts: ', a.recommendation_key, '.'
     )
     WHEN 'Value Reversal' THEN CONCAT(
-      FORMAT('%.1f', pct_from_52w_high), '% from 52w high (deep correction). ',
-      'PE ratio: ', FORMAT('%.1f', pe_ratio), 'x. ',
-      'RSI ', FORMAT('%.0f', rsi_14), '. ',
-      'Analysts: ', recommendation_key, '.'
+      FORMAT('%.1f', a.pct_from_52w_high), '% from 52w high (deep correction). ',
+      'PE ratio: ', FORMAT('%.1f', a.pe_ratio), 'x. ',
+      'RSI ', FORMAT('%.0f', a.rsi_14), '. ',
+      'Analysts: ', a.recommendation_key, '.'
     )
-  END AS reason
-FROM all_candidates
-WHERE rank_in_sector <= 10
-ORDER BY sector, setup_type, rank_in_sector;
+  END AS reason,
+  c.short_name                                            AS company_name,
+  CONCAT('https://finance.yahoo.com/quote/', a.symbol)  AS company_url,
+  LEFT(c.business_summary, 500)                          AS company_summary,
+  CAST(NULL AS STRING)                                   AS top_news_title,
+  CAST(NULL AS STRING)                                   AS top_news_url,
+  CAST(NULL AS STRING)                                   AS narrative
+FROM all_candidates a
+LEFT JOIN latest_companies c ON c.symbol = a.symbol
+WHERE a.rank_in_sector <= 15
+ORDER BY a.sector, a.setup_type, a.rank_in_sector;

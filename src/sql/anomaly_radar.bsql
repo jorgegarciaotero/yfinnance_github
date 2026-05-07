@@ -1,0 +1,229 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ANOMALY RADAR — DAILY
+--
+-- Detects 3 types of market anomalies:
+--   1. Volume/Price Spike    — strong price impulse with volume confirmation
+--   2. Critical Oversold     — sharp drop + RSI < 30 (potential bounce)
+--   3. Confirmed Momentum    — sustained sector leader across 1d/3d/7d/30d
+--
+-- MINIMUM COST: scans only the last 40 days of enriched_prices_table.
+-- 1d/3d/7d/~30d changes are calculated with LAG() within that window.
+-- Top 5 per sector and anomaly type.
+--
+-- Idempotent: DELETE + INSERT for max_date.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+DECLARE max_date DATE;
+SET max_date = (
+  SELECT MAX(date) FROM `yfinance-gcp.yfinance_raw.enriched_prices_table`
+);
+
+DELETE FROM `yfinance-gcp.yfinance_raw.anomaly_radar`
+WHERE date = max_date;
+
+INSERT INTO `yfinance-gcp.yfinance_raw.anomaly_radar`
+WITH
+
+-- ── Latest company metadata (most recent weekly snapshot) ─────────────────────
+latest_companies AS (
+  SELECT symbol, short_name, business_summary
+  FROM (
+    SELECT symbol, short_name, business_summary,
+           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY updated_at DESC) AS rn
+    FROM `yfinance-gcp.yfinance_raw.companies`
+  )
+  WHERE rn = 1
+),
+
+-- ── 40-day window — minimum scan ─────────────────────────────────────────────
+window_raw AS (
+  SELECT
+    date, symbol, sector, industry,
+    close, volume, rsi_14,
+    pct_from_52w_high, momentum_10d,
+    market_cap, recommendation_key,
+    LAG(close, 1)  OVER w AS close_1d_ago,
+    LAG(close, 3)  OVER w AS close_3d_ago,
+    LAG(close, 7)  OVER w AS close_7d_ago,
+    LAG(close, 21) OVER w AS close_21d_ago,
+    AVG(volume) OVER (
+      PARTITION BY symbol ORDER BY date
+      ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING
+    ) AS avg_vol_20d
+  FROM `yfinance-gcp.yfinance_raw.enriched_prices_table`
+  WHERE date >= DATE_SUB(max_date, INTERVAL 40 DAY)
+    AND sector IS NOT NULL AND sector != ''
+    AND close > 5
+    AND market_cap > 500000000
+  WINDOW w AS (PARTITION BY symbol ORDER BY date)
+),
+
+-- ── Today only, with computed % changes ──────────────────────────────────────
+today AS (
+  SELECT
+    date, symbol, sector, industry,
+    ROUND(close, 2)                                                     AS close,
+    volume,
+    ROUND(rsi_14, 1)                                                    AS rsi_14,
+    ROUND(pct_from_52w_high * 100, 2)                                   AS pct_from_52w_high,
+    ROUND(momentum_10d * 100, 2)                                        AS momentum_10d_pct,
+    market_cap,
+    recommendation_key,
+    ROUND(SAFE_DIVIDE(close - close_1d_ago,  close_1d_ago)  * 100, 2)  AS change_1d_pct,
+    ROUND(SAFE_DIVIDE(close - close_3d_ago,  close_3d_ago)  * 100, 2)  AS change_3d_pct,
+    ROUND(SAFE_DIVIDE(close - close_7d_ago,  close_7d_ago)  * 100, 2)  AS change_7d_pct,
+    ROUND(SAFE_DIVIDE(close - close_21d_ago, close_21d_ago) * 100, 2)  AS change_30d_pct,
+    ROUND(SAFE_DIVIDE(volume, NULLIF(avg_vol_20d, 0)), 2)               AS volume_ratio
+  FROM window_raw
+  WHERE date = max_date
+    AND close_21d_ago IS NOT NULL
+),
+
+-- ── 1. Volume/Price Spike ─────────────────────────────────────────────────────
+-- Criteria: significant price impulse (1d ≥3%, 3d ≥7%, or 7d ≥10%)
+--           AND volume ≥1.5× the 20-day average
+-- Score (0-100):
+--   50pts — best daily rate (change_1d, change_3d/3, change_7d/7): 5%/day = 50pts
+--   50pts — volume: ×1.5 = 0pts, ×5 = 50pts
+spike AS (
+  SELECT
+    date, sector, industry, symbol,
+    'Volume/Price Spike'                AS anomaly_type,
+    close,
+    ROUND(market_cap / 1e9, 2)          AS market_cap_bn,
+    rsi_14,
+    change_1d_pct, change_3d_pct, change_7d_pct, change_30d_pct,
+    volume_ratio,
+    ROUND(
+        LEAST(50, GREATEST(0,
+          GREATEST(
+            change_1d_pct,
+            change_3d_pct / 3.0,
+            change_7d_pct / 7.0
+          ) / 5.0 * 50
+        ))
+      + LEAST(50, GREATEST(0, (volume_ratio - 1.5) / 3.5 * 50))
+    , 1) AS score,
+    ROW_NUMBER() OVER (
+      PARTITION BY sector
+      ORDER BY
+        GREATEST(change_1d_pct, change_3d_pct / 3.0, change_7d_pct / 7.0)
+        * LEAST(volume_ratio, 5.0) DESC
+    ) AS rank_in_sector
+  FROM today
+  WHERE (change_1d_pct >= 3 OR change_3d_pct >= 7 OR change_7d_pct >= 10)
+    AND volume_ratio >= 1.5
+    AND rsi_14 < 85
+),
+
+-- ── 2. Critical Oversold ──────────────────────────────────────────────────────
+-- Criteria: RSI < 30 AND drop ≥8% in 3d or ≥12% in 7d
+-- Score (0-100):
+--   50pts — RSI depth: RSI 30=0, RSI 0=50pts
+--   50pts — drop magnitude: −8%=0, −28%=50pts
+oversold AS (
+  SELECT
+    date, sector, industry, symbol,
+    'Critical Oversold'                 AS anomaly_type,
+    close,
+    ROUND(market_cap / 1e9, 2)          AS market_cap_bn,
+    rsi_14,
+    change_1d_pct, change_3d_pct, change_7d_pct, change_30d_pct,
+    volume_ratio,
+    ROUND(
+        LEAST(50, GREATEST(0, (30.0 - rsi_14) / 30.0 * 50))
+      + LEAST(50, GREATEST(0,
+          (ABS(LEAST(change_3d_pct, change_7d_pct)) - 8.0) / 20.0 * 50
+        ))
+    , 1) AS score,
+    ROW_NUMBER() OVER (
+      PARTITION BY sector
+      ORDER BY rsi_14 ASC
+    ) AS rank_in_sector
+  FROM today
+  WHERE rsi_14 < 30
+    AND (change_3d_pct <= -8 OR change_7d_pct <= -12)
+),
+
+-- ── 3. Confirmed Momentum ─────────────────────────────────────────────────────
+-- Criteria: positive in 30d and 7d; no reversal in 3d
+-- Score (0-100): 30pts 30d + 30pts 7d + 20pts 3d + 20pts 1d
+inertia AS (
+  SELECT
+    date, sector, industry, symbol,
+    'Confirmed Momentum'                AS anomaly_type,
+    close,
+    ROUND(market_cap / 1e9, 2)          AS market_cap_bn,
+    rsi_14,
+    change_1d_pct, change_3d_pct, change_7d_pct, change_30d_pct,
+    volume_ratio,
+    ROUND(
+        LEAST(30, GREATEST(0, change_30d_pct / 30.0 * 30))
+      + LEAST(30, GREATEST(0, change_7d_pct  / 10.0 * 30))
+      + LEAST(20, GREATEST(0, change_3d_pct  / 5.0  * 20))
+      + LEAST(20, GREATEST(0, change_1d_pct  / 2.0  * 20))
+    , 1) AS score,
+    ROW_NUMBER() OVER (
+      PARTITION BY sector
+      ORDER BY change_30d_pct DESC
+    ) AS rank_in_sector
+  FROM today
+  WHERE change_30d_pct >= 8
+    AND change_7d_pct  >= 2
+    AND change_3d_pct  >= -1
+),
+
+all_anomalies AS (
+  SELECT * FROM spike
+  UNION ALL
+  SELECT * FROM oversold
+  UNION ALL
+  SELECT * FROM inertia
+)
+
+SELECT
+  a.date,
+  a.sector,
+  a.industry,
+  a.symbol,
+  a.anomaly_type,
+  a.close,
+  a.market_cap_bn,
+  a.rsi_14,
+  a.change_1d_pct,
+  a.change_3d_pct,
+  a.change_7d_pct,
+  a.change_30d_pct,
+  a.volume_ratio,
+  a.score,
+  a.rank_in_sector,
+  CASE a.anomaly_type
+    WHEN 'Volume/Price Spike' THEN CONCAT(
+      '1d: ', FORMAT('%.1f', a.change_1d_pct), '% | ',
+      '3d: ', FORMAT('%.1f', a.change_3d_pct), '% | ',
+      '7d: ', FORMAT('%.1f', a.change_7d_pct), '%. ',
+      'Vol x', FORMAT('%.1f', a.volume_ratio), '. RSI ', FORMAT('%.0f', a.rsi_14), '.'
+    )
+    WHEN 'Critical Oversold' THEN CONCAT(
+      '3d: ', FORMAT('%.1f', a.change_3d_pct), '% | ',
+      '7d: ', FORMAT('%.1f', a.change_7d_pct), '%. ',
+      'RSI ', FORMAT('%.0f', a.rsi_14), ' (oversold). ',
+      'Vol x', FORMAT('%.1f', a.volume_ratio), '.'
+    )
+    WHEN 'Confirmed Momentum' THEN CONCAT(
+      '30d: +', FORMAT('%.1f', a.change_30d_pct), '% | ',
+      '7d: +', FORMAT('%.1f', a.change_7d_pct), '% | ',
+      '1d: ', FORMAT('%.1f', a.change_1d_pct), '%. ',
+      'RSI ', FORMAT('%.0f', a.rsi_14), '. Sector leader.'
+    )
+  END AS reason,
+  c.short_name                                            AS company_name,
+  CONCAT('https://finance.yahoo.com/quote/', a.symbol)  AS company_url,
+  LEFT(c.business_summary, 500)                          AS company_summary,
+  CAST(NULL AS STRING)                                   AS top_news_title,
+  CAST(NULL AS STRING)                                   AS top_news_url,
+  CAST(NULL AS STRING)                                   AS narrative
+FROM all_anomalies a
+LEFT JOIN latest_companies c ON c.symbol = a.symbol
+WHERE a.rank_in_sector <= 5
+ORDER BY a.anomaly_type, a.sector, a.rank_in_sector;
